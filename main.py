@@ -20,7 +20,7 @@ def select_image_file():
     return None
 
 # Load YOLO model
-model = YOLO("yolov8l.pt")
+model = YOLO("yolov8s.pt")
 
 # Main Streamlit app code
 def main():
