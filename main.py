@@ -1,51 +1,77 @@
-
-import streamlit as st
-import cv2
+import torch
 from ultralytics import YOLO
-from PIL import Image
-import numpy as np
+import cv2
+import cvzone
+import math
+import time
+import numpy
+# Check if GPU is available and use it if possible
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Function to select an image file using Streamlit file uploader
-def select_image_file():
-    st.sidebar.title('Select an Image')
-    uploaded_file = st.sidebar.file_uploader(
-        "Upload an image",
-        type=["jpg", "jpeg", "png", "bmp", "tiff", "tif"]
-    )
-    if uploaded_file is not None:
-        # Convert the file to an OpenCV image.
-        image = Image.open(uploaded_file)
-        image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        return image
-    return None
+# For Webcam
+cap = cv2.VideoCapture(0)
+cap.set(3, 640)  # Set width to 640 for faster processing
+cap.set(4, 480)  # Set height to 480 for faster processing
 
-# Load YOLO model
-model = YOLO("yolov8l.pt")
+# For Video
+# cap = cv2.VideoCapture("../Videos/motorbikes.mp4")
 
-# Main Streamlit app code
-def main():
-    st.title('YOLO Object Detection with Streamlit')
+# Load YOLO model with the specified device
+model = YOLO("yolov8m.pt").to(device)  # Use smaller model for faster processing
 
-    # Select an image
-    img = select_image_file()
+classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
+              "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+              "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+              "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat",
+              "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
+              "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli",
+              "carrot", "hot dog", "pizza", "donut", "cake", "chair", "sofa", "pottedplant", "bed",
+              "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote", "keyboard", "cell phone",
+              "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
+              "teddy bear", "hair drier", "toothbrush"
+              ]
 
-    if img is not None:
-        # Resize image to 1280x720
-        img_resized = cv2.resize(img, (1280, 720), interpolation=cv2.INTER_AREA)
+prev_frame_time = 0
+new_frame_time = 0
 
-        # Perform object detection with YOLO
-        results = model(img_resized)
+while True:
+    new_frame_time = time.time()
+    success, img = cap.read()
+    if not success:
+        break
 
-        # Get the annotated image from results
-        annotated_img = results[0].plot()
+    # Resize the image to be compatible with the model's expected input size
+    img_resized = cv2.resize(img, (640,640))
 
-        # Convert BGR image to RGB for displaying in Streamlit
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        annotated_img_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
+    # Convert image to tensor and add batch dimension
+    img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
-        # Display original and annotated images
-        st.image([img_rgb, annotated_img_rgb], caption=['Original Image', 'Annotated Image'], width=640)
+    # Normalize the image to be in range [0, 1]
+    img_tensor /= 255.0
 
-# Run the Streamlit app
-if __name__ == '__main__':
-    main()
+    results = model(img_tensor, stream=True)
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            # Bounding Box
+            x1, y1, x2, y2 = box.xyxy[0]
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            w, h = x2 - x1, y2 - y1
+            cvzone.cornerRect(img, (x1, y1, w, h))
+            # Confidence
+            conf = math.ceil((box.conf[0] * 100)) / 100
+            # Class Name
+            cls = int(box.cls[0])
+
+            cvzone.putTextRect(img, f'{classNames[cls]} {conf}', (max(0, x1), max(35, y1)), scale=1, thickness=2)
+
+    fps = 1 / (new_frame_time - prev_frame_time)  # Correct FPS calculation
+    prev_frame_time = new_frame_time
+    print(f"FPS: {fps:.2f}")
+
+    cv2.imshow("Image", img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
